@@ -1,0 +1,6 @@
+{
+  "name": "MoneyPrinterTurbo",
+  "description": "Automated short-form video synthesis dashboard for generating scripts, search keywords, voiceovers, background music, and styled subtitles.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
