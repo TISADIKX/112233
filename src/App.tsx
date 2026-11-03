@@ -20,9 +20,11 @@ import {
   DEFAULT_SUBTITLE_SETTINGS,
   DEFAULT_SYSTEM_PROMPT,
   GEMINI_TTS_VOICES,
+  PHOTO_ANIMATION_MODES,
   POLLINATIONS_VIDEO_MODELS,
   SCRIPT_LANGUAGES,
   SUBTITLE_FONTS,
+  VIDEO_TRANSITION_MODES,
   type DashboardSettings,
   type LibraryVideo,
 } from "./types/dashboard";
@@ -81,6 +83,18 @@ export default function App() {
   } | null>(null);
 
   const presetInputRef = useRef<HTMLInputElement | null>(null);
+  const scriptIsAutoRef = useRef<boolean>(true);
+  const keywordsAreAutoRef = useRef<boolean>(true);
+  const generatedPromptSigRef = useRef<string>("");
+
+  const computePromptSig = (s: DashboardSettings): string =>
+    JSON.stringify([
+      s.videoSubject.trim(),
+      s.scriptLanguage,
+      s.paragraphCount,
+      s.customScriptRequirements.trim(),
+      s.systemPrompt.trim(),
+    ]);
 
   // Enforce dark mode class permanently & load existing Library items
   useEffect(() => {
@@ -99,7 +113,42 @@ export default function App() {
     key: K,
     value: DashboardSettings[K]
   ) => {
-    setSettings((prev) => ({ ...prev, [key]: value }));
+    if (key === "videoScript") {
+      const isEmpty = String(value).trim() === "";
+      scriptIsAutoRef.current = isEmpty;
+      setSettings((prev) => ({
+        ...prev,
+        videoScript: String(value),
+        videoKeywords: keywordsAreAutoRef.current ? "" : prev.videoKeywords,
+      }));
+      return;
+    }
+
+    if (key === "videoKeywords") {
+      keywordsAreAutoRef.current = String(value).trim() === "";
+      setSettings((prev) => ({ ...prev, videoKeywords: String(value) }));
+      return;
+    }
+
+    const isPromptField =
+      key === "videoSubject" ||
+      key === "customScriptRequirements" ||
+      key === "scriptLanguage" ||
+      key === "paragraphCount" ||
+      key === "systemPrompt";
+
+    setSettings((prev) => {
+      const next = { ...prev, [key]: value };
+      if (isPromptField) {
+        if (scriptIsAutoRef.current && prev.videoScript) {
+          next.videoScript = "";
+        }
+        if (keywordsAreAutoRef.current && prev.videoKeywords) {
+          next.videoKeywords = "";
+        }
+      }
+      return next;
+    });
   };
 
   // Word count & speaking duration estimate
@@ -114,6 +163,28 @@ export default function App() {
     const speed = parseFloat(settings.voiceSpeed) || 1.0;
     return Math.max(3, Math.round(scriptWordCount / (2.5 * speed)));
   }, [scriptWordCount, settings.voiceSpeed]);
+
+  const subtitlePreviewLine = useMemo(() => {
+    const raw =
+      settings.videoScript
+        .trim()
+        .split(/[.!?。！？\r\n]+/)
+        .map((s) => s.trim())
+        .find(Boolean) ||
+      settings.videoSubject.trim() ||
+      "The snake strikes in silence";
+    const words = raw.split(/\s+/).filter(Boolean);
+    const snippet =
+      settings.subtitleDisplayMode === "Word by word"
+        ? words.slice(0, 3).join(" ")
+        : words.slice(0, 6).join(" ");
+    return settings.subtitleUppercase ? snippet.toUpperCase() : snippet;
+  }, [
+    settings.videoScript,
+    settings.videoSubject,
+    settings.subtitleDisplayMode,
+    settings.subtitleUppercase,
+  ]);
 
   // Handlers: Gemini Script & Keywords
   const handleGenerateScriptAndKeywords = async () => {
@@ -149,11 +220,20 @@ export default function App() {
         throw new Error(data.error || "Failed to generate script.");
       }
       if (data.script) {
-        updateField("videoScript", data.script);
+        scriptIsAutoRef.current = true;
       }
       if (data.keywords && data.keywords.length > 0) {
-        updateField("videoKeywords", data.keywords.join(", "));
+        keywordsAreAutoRef.current = true;
       }
+      generatedPromptSigRef.current = computePromptSig(settings);
+      setSettings((prev) => ({
+        ...prev,
+        videoScript: data.script || prev.videoScript,
+        videoKeywords:
+          data.keywords && data.keywords.length > 0
+            ? data.keywords.join(" | ")
+            : prev.videoKeywords,
+      }));
       setFeedbackBanner({
         type: "success",
         message: "Generated script and Pollinations AI visual keywords via Gemini.",
@@ -191,6 +271,7 @@ export default function App() {
         body: JSON.stringify({
           subject: settings.videoSubject,
           script: settings.videoScript,
+          customRequirements: settings.customScriptRequirements,
         }),
       });
       const data = (await res.json()) as {
@@ -201,7 +282,12 @@ export default function App() {
         throw new Error(data.error || "Failed to generate keywords.");
       }
       if (data.keywords && data.keywords.length > 0) {
-        updateField("videoKeywords", data.keywords.join(", "));
+        keywordsAreAutoRef.current = true;
+        generatedPromptSigRef.current = computePromptSig(settings);
+        setSettings((prev) => ({
+          ...prev,
+          videoKeywords: data.keywords!.join(" | "),
+        }));
       }
       setFeedbackBanner({
         type: "success",
@@ -380,8 +466,16 @@ export default function App() {
       );
       let latestVideo: LibraryVideo | null = null;
       let latestNotice = "";
-      let activeScript = settings.videoScript;
-      let activeKeywords = settings.videoKeywords;
+      const currentPromptSig = computePromptSig(settings);
+      const isPromptChanged = generatedPromptSigRef.current !== currentPromptSig;
+
+      // Never reuse stale AI-generated script/keywords when the user changed the Video Subject or requirements
+      let activeScript =
+        scriptIsAutoRef.current && isPromptChanged ? "" : settings.videoScript;
+      let activeKeywords =
+        keywordsAreAutoRef.current && isPromptChanged
+          ? ""
+          : settings.videoKeywords;
 
       for (let runIdx = 0; runIdx < count; runIdx++) {
         const prefix = count > 1 ? `[Video ${runIdx + 1}/${count}] ` : "";
@@ -400,6 +494,7 @@ export default function App() {
             pollinationsVideoModel: settings.pollinationsVideoModel,
             videoConcatMode: settings.videoConcatMode,
             matchMaterialsToScript: settings.matchMaterialsToScript,
+            photoAnimationMode: settings.photoAnimationMode,
             videoTransitionMode: settings.videoTransitionMode,
             aspectRatio: settings.videoAspectRatio,
             sourceFrameFit: settings.sourceFrameFit,
@@ -413,13 +508,20 @@ export default function App() {
             bgmSource: settings.bgmSource,
             bgmVolume: settings.bgmVolume,
             subtitleEnabled: settings.subtitleEnabled,
+            subtitleUppercase: settings.subtitleUppercase,
             subtitlePosition: settings.subtitlePosition,
             customPositionPercent: settings.customPositionPercent,
             subtitleDisplayMode: settings.subtitleDisplayMode,
+            entranceAnimation: settings.entranceAnimation,
             fontColor: settings.fontColor,
             fontSize: settings.fontSize,
             strokeColor: settings.strokeColor,
             strokeWidth: settings.strokeWidth,
+            textShadowEnabled: settings.textShadowEnabled,
+            textShadowColor: settings.textShadowColor,
+            textShadowOffset: settings.textShadowOffset,
+            textShadowBlur: settings.textShadowBlur,
+            textShadowOpacity: settings.textShadowOpacity,
             subtitleBackgroundEnabled: settings.subtitleBackgroundEnabled,
             subtitleBackgroundColor: settings.subtitleBackgroundColor,
           }),
@@ -526,16 +628,24 @@ export default function App() {
 
         if (!activeScript.trim() && completedData.script) {
           activeScript = completedData.script;
-          updateField("videoScript", completedData.script);
+          scriptIsAutoRef.current = true;
         }
         if (
-          !activeKeywords.trim() &&
           completedData.keywords &&
-          completedData.keywords.length > 0
+          completedData.keywords.length > 0 &&
+          (!activeKeywords.trim() ||
+            keywordsAreAutoRef.current ||
+            settings.matchMaterialsToScript)
         ) {
-          activeKeywords = completedData.keywords.join(", ");
-          updateField("videoKeywords", activeKeywords);
+          activeKeywords = completedData.keywords.join(" | ");
+          keywordsAreAutoRef.current = true;
         }
+        generatedPromptSigRef.current = currentPromptSig;
+        setSettings((prev) => ({
+          ...prev,
+          videoScript: activeScript || prev.videoScript,
+          videoKeywords: activeKeywords || prev.videoKeywords,
+        }));
 
         latestVideo = completedData.video!;
         if (completedData.notice) {
@@ -752,17 +862,29 @@ export default function App() {
             </button>
 
             <div>
-              <FieldLabelRow
-                htmlFor="video-script-textarea"
-                label="Video Script (Optional)"
-                tooltip="Leave blank to generate automatically with Gemini from the video subject. Proper punctuation improves subtitle synchronization."
-              />
+              <div className="flex items-center justify-between gap-2">
+                <FieldLabelRow
+                  htmlFor="video-script-textarea"
+                  label="Video Script (Optional)"
+                  tooltip="Leave blank to generate automatically with Gemini from the video subject. Changing Video Subject automatically refreshes AI-generated scripts."
+                />
+                {settings.videoScript && (
+                  <button
+                    type="button"
+                    onClick={() => updateField("videoScript", "")}
+                    className="mb-1.5 text-[12px] text-[#fafafa]/55 hover:text-[#ff4b4b] transition-colors cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
               <textarea
                 id="video-script-textarea"
                 rows={5}
                 value={settings.videoScript}
                 onChange={(e) => updateField("videoScript", e.target.value)}
-                className="w-full rounded-lg bg-[#262730] border border-white/15 focus:border-[#ff4b4b] focus:ring-1 focus:ring-[#ff4b4b] outline-none p-3 text-[14px] leading-relaxed text-[#fafafa] resize-y"
+                placeholder="Leave blank to auto-generate a fresh script from your Video Subject..."
+                className="w-full rounded-lg bg-[#262730] border border-white/15 focus:border-[#ff4b4b] focus:ring-1 focus:ring-[#ff4b4b] outline-none p-3 text-[14px] leading-relaxed text-[#fafafa] placeholder:text-[#fafafa]/35 resize-y"
               />
             </div>
 
@@ -785,17 +907,29 @@ export default function App() {
             </button>
 
             <div>
-              <FieldLabelRow
-                htmlFor="video-keywords-input"
-                label="Video Keywords (English, Optional)"
-                tooltip="Leave blank to extract automatically with Gemini. Separate multiple Pollinations AI visual prompts with commas."
-              />
+              <div className="flex items-center justify-between gap-2">
+                <FieldLabelRow
+                  htmlFor="video-keywords-input"
+                  label="Video Keywords (English, Optional)"
+                  tooltip="Leave blank to extract scene-by-scene visual prompts automatically with Gemini."
+                />
+                {settings.videoKeywords && (
+                  <button
+                    type="button"
+                    onClick={() => updateField("videoKeywords", "")}
+                    className="mb-1.5 text-[12px] text-[#fafafa]/55 hover:text-[#ff4b4b] transition-colors cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
               <input
                 id="video-keywords-input"
                 type="text"
                 value={settings.videoKeywords}
                 onChange={(e) => updateField("videoKeywords", e.target.value)}
-                className="w-full min-h-[40px] px-3 py-2 rounded-lg bg-[#262730] border border-white/15 focus:border-[#ff4b4b] focus:ring-1 focus:ring-[#ff4b4b] outline-none text-[14px] text-[#fafafa]"
+                placeholder="Leave blank to auto-extract Pollinations AI visual prompts..."
+                className="w-full min-h-[40px] px-3 py-2 rounded-lg bg-[#262730] border border-white/15 focus:border-[#ff4b4b] focus:ring-1 focus:ring-[#ff4b4b] outline-none text-[14px] text-[#fafafa] placeholder:text-[#fafafa]/35"
               />
             </div>
           </section>
@@ -820,11 +954,11 @@ export default function App() {
                 label="Pollinations Video Model"
                 value={settings.pollinationsVideoModel}
                 options={POLLINATIONS_VIDEO_MODELS}
-                tooltip="Calls gen.pollinations.ai/video/{prompt} when Paid Pollen is enabled on POLLINATIONS_API_KEY in Settings > Secrets, and automatically synthesizes multi-shot continuous camera motion + transitions when using Quest/free tier."
+                tooltip="Calls gen.pollinations.ai/video/{prompt} when Paid Pollen is active, or acquires high-resolution photorealistic live-action storyboard frames."
                 onChange={(val) => updateField("pollinationsVideoModel", val)}
               />
               <p className="text-[12.5px] leading-relaxed text-[#fafafa]/60">
-                Calls native Pollinations video models (<span className="font-mono text-[11.5px] text-[#fafafa]/80">gen.pollinations.ai/video</span>) with automatic multi-shot camera motion &amp; crossfade synthesis when Paid Pollen is unavailable.
+                Animates photorealistic scenes with smooth 30fps camera motion (zoom-in, zoom-out, pan &amp; slide) and native Pollinations AI clips into H.264 MP4 videos.
               </p>
             </div>
 
@@ -844,22 +978,22 @@ export default function App() {
               onChange={(checked) =>
                 updateField("matchMaterialsToScript", checked)
               }
-              tooltip="Generate Pollinations AI visuals in script order so scenes follow the voiceover."
+              tooltip="Synchronizes each clip's visual subject and transition timing directly to the spoken sentences, entities, and voiceover pauses."
+            />
+
+            <SelectField
+              label="Photo Clip Animation"
+              value={settings.photoAnimationMode}
+              options={PHOTO_ANIMATION_MODES}
+              tooltip="Applies continuous subpixel camera motion (zoom-in, zoom-out, horizontal slide, vertical pan, or Ken Burns drift) to every generated photo clip."
+              onChange={(val) => updateField("photoAnimationMode", val)}
             />
 
             <SelectField
               label="Video Transition Mode"
               value={settings.videoTransitionMode}
-              options={[
-                "None",
-                "Shuffle",
-                "FadeIn",
-                "FadeOut",
-                "SlideIn",
-                "SlideOut",
-                "ZoomIn",
-                "ZoomOut",
-              ]}
+              options={VIDEO_TRANSITION_MODES}
+              tooltip="Selects the visual transition applied between video scenes."
               onChange={(val) => updateField("videoTransitionMode", val)}
             />
 
@@ -1159,6 +1293,14 @@ export default function App() {
               onChange={(checked) => updateField("subtitleEnabled", checked)}
             />
 
+            <CheckboxField
+              label="Capital Letters (ALL CAPS)"
+              checked={settings.subtitleUppercase}
+              disabled={!settings.subtitleEnabled}
+              tooltip="Converts all rendered video subtitles into bold capital letters."
+              onChange={(checked) => updateField("subtitleUppercase", checked)}
+            />
+
             <SelectField
               label="Font"
               value={settings.fontName}
@@ -1207,7 +1349,13 @@ export default function App() {
               label="Entrance animation"
               value={settings.entranceAnimation}
               disabled={!settings.subtitleEnabled}
-              options={["None", "Spring pop"]}
+              options={[
+                "Cinema Clean Dissolve",
+                "Subtle Ease",
+                "None",
+                "Kinetic Motion Ease",
+                "Spring pop",
+              ]}
               onChange={(val) => updateField("entranceAnimation", val)}
             />
 
@@ -1249,7 +1397,64 @@ export default function App() {
               />
             </div>
 
-            <div className="space-y-3 pt-1">
+            <div className="space-y-3 pt-1 border-t border-white/10">
+              <CheckboxField
+                label="Text Shadow"
+                checked={settings.textShadowEnabled}
+                disabled={!settings.subtitleEnabled}
+                tooltip="Adds a customizable cinema drop shadow behind subtitle letters for high contrast over bright scenes."
+                onChange={(checked) =>
+                  updateField("textShadowEnabled", checked)
+                }
+              />
+
+              {settings.textShadowEnabled && (
+                <div className="space-y-3 pl-0.5">
+                  <div className="grid grid-cols-[auto_1fr] items-start gap-3">
+                    <ColorPickerField
+                      label="Shadow"
+                      value={settings.textShadowColor}
+                      disabled={!settings.subtitleEnabled}
+                      onChange={(hex) => updateField("textShadowColor", hex)}
+                    />
+                    <SliderField
+                      label="Shadow Distance"
+                      value={settings.textShadowOffset}
+                      min={0.5}
+                      max={12}
+                      step={0.5}
+                      disabled={!settings.subtitleEnabled}
+                      formatValue={(v) => `${v.toFixed(1)}px`}
+                      onChange={(val) => updateField("textShadowOffset", val)}
+                    />
+                  </div>
+
+                  <SliderField
+                    label="Shadow Softness"
+                    value={settings.textShadowBlur}
+                    min={0}
+                    max={8}
+                    step={0.5}
+                    disabled={!settings.subtitleEnabled}
+                    formatValue={(v) => `${v.toFixed(1)}px`}
+                    onChange={(val) => updateField("textShadowBlur", val)}
+                  />
+
+                  <SliderField
+                    label="Shadow Opacity"
+                    value={settings.textShadowOpacity}
+                    min={10}
+                    max={100}
+                    step={5}
+                    disabled={!settings.subtitleEnabled}
+                    formatValue={(v) => `${Math.round(v)}%`}
+                    onChange={(val) => updateField("textShadowOpacity", val)}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3 pt-1 border-t border-white/10">
               <div className="flex items-end justify-between gap-3">
                 <CheckboxField
                   label="Background"
@@ -1285,6 +1490,108 @@ export default function App() {
                 }
               />
             </div>
+
+            {settings.subtitleEnabled && (
+              <div className="rounded-lg border border-white/12 bg-gradient-to-b from-[#1d2230] to-[#12151e] p-2.5">
+                <div className="flex items-center justify-between text-[11.5px] text-[#fafafa]/55 mb-1.5">
+                  <span>Subtitle Style Preview</span>
+                  <span className="font-mono tabular-nums">
+                    {settings.subtitleUppercase ? "ALL CAPS" : "Mixed Case"}
+                    {settings.textShadowEnabled ? " · Shadow On" : ""}
+                  </span>
+                </div>
+                <svg
+                  viewBox="0 0 360 72"
+                  className="w-full h-[64px] rounded bg-[#0b0e14]/70 overflow-hidden"
+                  role="img"
+                  aria-label="Live subtitle preview"
+                >
+                  <defs>
+                    <filter
+                      id="subtitle-drop-shadow"
+                      x="-25%"
+                      y="-25%"
+                      width="150%"
+                      height="150%"
+                    >
+                      <feDropShadow
+                        dx={
+                          settings.textShadowEnabled
+                            ? settings.textShadowOffset
+                            : 0
+                        }
+                        dy={
+                          settings.textShadowEnabled
+                            ? settings.textShadowOffset
+                            : 0
+                        }
+                        stdDeviation={
+                          settings.textShadowEnabled
+                            ? settings.textShadowBlur * 0.75
+                            : 0
+                        }
+                        floodColor={settings.textShadowColor}
+                        floodOpacity={
+                          settings.textShadowEnabled
+                            ? settings.textShadowOpacity / 100
+                            : 0
+                        }
+                      />
+                    </filter>
+                  </defs>
+                  {settings.subtitleBackgroundEnabled && (
+                    <rect
+                      x="24"
+                      y="16"
+                      width="312"
+                      height="40"
+                      rx={settings.roundedSubtitleBackground ? 10 : 2}
+                      fill={settings.subtitleBackgroundColor}
+                      fillOpacity={0.75}
+                      filter={
+                        settings.textShadowEnabled
+                          ? "url(#subtitle-drop-shadow)"
+                          : undefined
+                      }
+                    />
+                  )}
+                  <text
+                    x="180"
+                    y="38"
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fill={settings.fontColor}
+                    stroke={
+                      settings.subtitleBackgroundEnabled ||
+                      settings.strokeWidth <= 0
+                        ? "none"
+                        : settings.strokeColor
+                    }
+                    strokeWidth={
+                      settings.subtitleBackgroundEnabled
+                        ? 0
+                        : settings.strokeWidth * 1.6
+                    }
+                    strokeLinejoin="round"
+                    paintOrder="stroke fill"
+                    fontSize={Math.max(
+                      13,
+                      Math.min(26, Math.round(settings.fontSize * 0.31))
+                    )}
+                    fontWeight="700"
+                    fontFamily="sans-serif"
+                    filter={
+                      !settings.subtitleBackgroundEnabled &&
+                      settings.textShadowEnabled
+                        ? "url(#subtitle-drop-shadow)"
+                        : undefined
+                    }
+                  >
+                    {subtitlePreviewLine}
+                  </text>
+                </svg>
+              </div>
+            )}
 
             <button
               type="button"

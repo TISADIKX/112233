@@ -8,11 +8,12 @@ export interface DashboardSettings {
   videoScript: string;
   videoKeywords: string;
 
-  // Video Settings (Pollinations AI only)
+  // Video Settings (Pollinations AI)
   videoSource: "Pollinations AI";
   pollinationsVideoModel: string;
   videoConcatMode: string;
   matchMaterialsToScript: boolean;
+  photoAnimationMode: string;
   videoTransitionMode: string;
   videoAspectRatio: string;
   sourceFrameFit: string;
@@ -33,6 +34,7 @@ export interface DashboardSettings {
 
   // Subtitle Settings
   subtitleEnabled: boolean;
+  subtitleUppercase: boolean;
   fontName: string;
   subtitlePosition: string;
   customPositionPercent: number;
@@ -42,6 +44,11 @@ export interface DashboardSettings {
   fontSize: number;
   strokeColor: string;
   strokeWidth: number;
+  textShadowEnabled: boolean;
+  textShadowColor: string;
+  textShadowOffset: number;
+  textShadowBlur: number;
+  textShadowOpacity: number;
   subtitleBackgroundEnabled: boolean;
   subtitleBackgroundColor: string;
   roundedSubtitleBackground: boolean;
@@ -72,6 +79,30 @@ export const POLLINATIONS_VIDEO_MODELS = [
   "veo (Google Veo 3.1 Fast)",
 ];
 
+export const PHOTO_ANIMATION_MODES = [
+  "Auto Dynamic (Zoom + Slide + Pan)",
+  "Zoom In",
+  "Zoom Out",
+  "Alternate Zoom (In & Out)",
+  "Slide Left & Right",
+  "Slide Left",
+  "Slide Right",
+  "Slide Up & Down",
+  "Ken Burns Drift (Pan + Zoom)",
+  "None (Static Photo)",
+];
+
+export const VIDEO_TRANSITION_MODES = [
+  "Shuffle",
+  "ZoomIn",
+  "ZoomOut",
+  "SlideIn",
+  "SlideOut",
+  "FadeIn",
+  "FadeOut",
+  "None",
+];
+
 export const DEFAULT_SYSTEM_PROMPT = `# Role: Video Script Generator
 
 ## Goals:
@@ -89,15 +120,21 @@ Generate a script for a video, depending on the subject of the video.
 
 export const DEFAULT_SUBTITLE_SETTINGS = {
   subtitleEnabled: true,
+  subtitleUppercase: true,
   fontName: "UTM Kabel KT.ttf",
   subtitlePosition: "Bottom (Recommended)",
   customPositionPercent: 80,
   subtitleDisplayMode: "Whole sentence",
-  entranceAnimation: "None",
+  entranceAnimation: "Cinema Clean Dissolve",
   fontColor: "#FFFFFF",
-  fontSize: 60,
+  fontSize: 56,
   strokeColor: "#000000",
   strokeWidth: 1.5,
+  textShadowEnabled: true,
+  textShadowColor: "#000000",
+  textShadowOffset: 4,
+  textShadowBlur: 2,
+  textShadowOpacity: 80,
   subtitleBackgroundEnabled: false,
   subtitleBackgroundColor: "#000000",
   roundedSubtitleBackground: false,
@@ -116,6 +153,7 @@ export const DEFAULT_DASHBOARD_SETTINGS: DashboardSettings = {
   pollinationsVideoModel: "wan-fast (Alibaba Wan 2.2 Fast)",
   videoConcatMode: "Sequential Concatenation",
   matchMaterialsToScript: true,
+  photoAnimationMode: "Auto Dynamic (Zoom + Slide + Pan)",
   videoTransitionMode: "Shuffle",
   videoAspectRatio: "Portrait 9:16",
   sourceFrameFit: "Fill (center crop)",
